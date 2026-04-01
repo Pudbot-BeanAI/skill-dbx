@@ -1,3 +1,15 @@
+# Copy this file to one of the default config locations:
+#   ./dbx.toml
+#   ~/.dbx/config.toml
+#   ~/.config/dbx/config.toml
+#
+# dbx checks config paths in this order:
+#   1. --config /path/to/config.toml
+#   2. ./dbx.toml
+#   3. ~/.dbx/config.toml
+#   4. ~/.config/dbx/config.toml
+# Missing default locations are skipped.
+
 default_profile = "local_pg"
 
 [output]

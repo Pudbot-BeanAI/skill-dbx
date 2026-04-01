@@ -7,6 +7,8 @@
 
 That makes production behavior unambiguous even when shorthand phrases like "only allow DDL" are internally contradictory.
 
+Chinese documentation: [`docs/README.zh-CN.md`](docs/README.zh-CN.md)
+
 ## Features
 
 - Rust CLI built with `clap`, `serde`, `toml`, and `sqlx`
@@ -67,9 +69,13 @@ By default, `dbx` looks for config in this order:
 
 1. `--config /path/to/config.toml`
 2. `./dbx.toml`
-3. `~/.config/dbx/config.toml`
+3. `~/.dbx/config.toml`
+4. `~/.config/dbx/config.toml`
 
-See [`examples/dbx.example.toml`](/root/go/src/github.com/sql/dbx/examples/dbx.example.toml) for a fuller example.
+This keeps a simple home-directory path available while still supporting the XDG-style location.
+Missing default locations are skipped; `dbx` loads the first config file in that order that actually exists.
+
+See [`examples/dbx.example.toml`](examples/dbx.example.toml) for a fuller example.
 
 Minimal profile example:
 
