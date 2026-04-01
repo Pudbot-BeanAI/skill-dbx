@@ -35,8 +35,8 @@ jobs:
             exit 1
           fi
 
-  build-packages:
-    name: Build package (${{ matrix.platform }})
+  build-skill:
+    name: Build skill (${{ matrix.platform }}-${{ matrix.arch }})
     needs: verify-tag-from-main
     runs-on: ${{ matrix.os }}
     strategy:
@@ -45,15 +45,15 @@ jobs:
         include:
           - os: ubuntu-latest
             platform: linux
-            archive_ext: tar.gz
+            arch: amd64
             binary_name: dbx
           - os: macos-latest
             platform: macos
-            archive_ext: tar.gz
+            arch: amd64
             binary_name: dbx
           - os: windows-latest
             platform: windows
-            archive_ext: zip
+            arch: amd64
             binary_name: dbx.exe
 
     steps:
@@ -66,65 +66,45 @@ jobs:
       - name: Cache cargo artifacts
         uses: Swatinem/rust-cache@v2
 
+      - name: Install Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
       - name: Build release binary
         run: cargo build --locked --release --bin dbx
 
-      - name: Package release artifact
-        id: package
-        shell: pwsh
+      - name: Package skill artifact
+        shell: bash
         run: |
-          $tag = "${{ github.ref_name }}"
-          $packageBase = "dbx-$tag-${{ matrix.platform }}-${{ runner.arch }}"
-          $packageDir = Join-Path $PWD $packageBase
-          $distDir = Join-Path $PWD "dist"
-
-          if (Test-Path $packageDir) {
-            Remove-Item $packageDir -Recurse -Force
-          }
-
-          New-Item -ItemType Directory -Path $packageDir | Out-Null
-          New-Item -ItemType Directory -Path $distDir -Force | Out-Null
-
-          Copy-Item "target/release/${{ matrix.binary_name }}" $packageDir
-          Copy-Item "README.md" $packageDir
-          Copy-Item "LICENSE" $packageDir
-
-          $archivePath = Join-Path $distDir "$packageBase.${{ matrix.archive_ext }}"
-
-          if (Test-Path $archivePath) {
-            Remove-Item $archivePath -Force
-          }
-
-          if ("${{ matrix.archive_ext }}" -eq "zip") {
-            Compress-Archive -Path $packageDir -DestinationPath $archivePath -Force
-          } else {
-            tar -czf $archivePath -C $PWD $packageBase
-          }
-
-          "archive_path=$archivePath" >> $env:GITHUB_OUTPUT
+          python scripts/package_skill.py \
+            --binary target/release/${{ matrix.binary_name }} \
+            --target-os ${{ matrix.platform }} \
+            --target-arch ${{ matrix.arch }} \
+            --output-dir dist
 
       - name: Upload packaged artifact
         uses: actions/upload-artifact@v4
         with:
-          name: release-${{ matrix.platform }}
-          path: ${{ steps.package.outputs.archive_path }}
+          name: skill-${{ matrix.platform }}-${{ matrix.arch }}
+          path: dist/dbx-dba-${{ matrix.platform }}-${{ matrix.arch }}.skill
           if-no-files-found: error
 
   publish-release:
     name: Publish GitHub release
-    needs: build-packages
+    needs: build-skill
     runs-on: ubuntu-latest
     steps:
       - name: Download packaged artifacts
         uses: actions/download-artifact@v4
         with:
           path: dist
-          pattern: release-*
+          pattern: skill-*
           merge-multiple: true
 
       - name: Publish release assets
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/*
+          files: dist/*.skill
           generate_release_notes: true
           fail_on_unmatched_files: true
