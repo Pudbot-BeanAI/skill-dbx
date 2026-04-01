@@ -7,6 +7,8 @@
 
 That makes production behavior unambiguous even when shorthand phrases like "only allow DDL" are internally contradictory.
 
+Chinese documentation: [`docs/README.zh-CN.md`](docs/README.zh-CN.md)
+
 ## Features
 
 - Rust CLI built with `clap`, `serde`, `toml`, and `sqlx`
@@ -24,15 +26,56 @@ That makes production behavior unambiguous even when shorthand phrases like "onl
 cargo build
 ```
 
+## CI And Releases
+
+GitHub Actions handles both validation and release packaging:
+
+- `CI` runs on branch pushes and pull requests
+- it checks `cargo fmt --check`, `cargo test --locked`, and `cargo build --locked --release --bin dbx`
+- `Release` runs only when a tag matching `v*` is pushed
+- release packaging is built natively on `ubuntu-latest`, `macos-latest`, and `windows-latest`
+- release artifact names include the runner OS label plus architecture
+- Linux and macOS artifacts are published as `.tar.gz`
+- Windows artifacts are published as `.zip` and include `dbx.exe`
+
+Release packages include:
+
+- the compiled `dbx` binary (`dbx.exe` on Windows)
+- `README.md`
+- `LICENSE`
+
+### Release Rule
+
+Packaging is intended to happen only for tags created from `main`.
+
+GitHub Actions cannot infer "tag was created from main" directly from the event payload, so the release workflow enforces a practical safeguard instead:
+
+- it fetches `origin/main`
+- it verifies the tagged commit is contained in `origin/main`
+- if that check fails, the workflow stops before any release artifacts are built or published
+
+That means a tag pushed from a feature branch commit will fail the release workflow. It also means an older commit that is still reachable from `main` will pass the check, which is an intentional approximation of the policy.
+
+### Maintainer Release Steps
+
+1. Merge the intended release commit into `main`.
+2. Create an annotated tag such as `v0.1.0` on that `main` commit.
+3. Push the tag to GitHub.
+4. Wait for the `Release` workflow to build and publish the Linux, macOS, and Windows archives.
+
 ## Config
 
 By default, `dbx` looks for config in this order:
 
 1. `--config /path/to/config.toml`
 2. `./dbx.toml`
-3. `~/.config/dbx/config.toml`
+3. `~/.dbx/config.toml`
+4. `~/.config/dbx/config.toml`
 
-See [`examples/dbx.example.toml`](/root/go/src/github.com/sql/dbx/examples/dbx.example.toml) for a fuller example.
+This keeps a simple home-directory path available while still supporting the XDG-style location.
+Missing default locations are skipped; `dbx` loads the first config file in that order that actually exists.
+
+See [`examples/dbx.example.toml`](examples/dbx.example.toml) for a fuller example.
 
 Minimal profile example:
 
