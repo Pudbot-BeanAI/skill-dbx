@@ -1,0 +1,130 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  verify-tag-from-main:
+    name: Verify tag commit is on main
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout tag
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Fetch origin/main
+        run: git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+
+      - name: Validate tagged commit ancestry
+        shell: bash
+        run: |
+          if git merge-base --is-ancestor "$GITHUB_SHA" "origin/main"; then
+            echo "Tag ${GITHUB_REF_NAME} points to a commit contained in origin/main."
+          else
+            echo "::error::Tag ${GITHUB_REF_NAME} does not point to a commit contained in origin/main. Release packaging is limited to tags on main history."
+            exit 1
+          fi
+
+  build-packages:
+    name: Build package (${{ matrix.platform }})
+    needs: verify-tag-from-main
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            platform: linux
+            archive_ext: tar.gz
+            binary_name: dbx
+          - os: macos-latest
+            platform: macos
+            archive_ext: tar.gz
+            binary_name: dbx
+          - os: windows-latest
+            platform: windows
+            archive_ext: zip
+            binary_name: dbx.exe
+
+    steps:
+      - name: Checkout tag
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build release binary
+        run: cargo build --locked --release --bin dbx
+
+      - name: Package release artifact
+        id: package
+        shell: pwsh
+        run: |
+          $tag = "${{ github.ref_name }}"
+          $packageBase = "dbx-$tag-${{ matrix.platform }}-${{ runner.arch }}"
+          $packageDir = Join-Path $PWD $packageBase
+          $distDir = Join-Path $PWD "dist"
+
+          if (Test-Path $packageDir) {
+            Remove-Item $packageDir -Recurse -Force
+          }
+
+          New-Item -ItemType Directory -Path $packageDir | Out-Null
+          New-Item -ItemType Directory -Path $distDir -Force | Out-Null
+
+          Copy-Item "target/release/${{ matrix.binary_name }}" $packageDir
+          Copy-Item "README.md" $packageDir
+          Copy-Item "LICENSE" $packageDir
+
+          $archivePath = Join-Path $distDir "$packageBase.${{ matrix.archive_ext }}"
+
+          if (Test-Path $archivePath) {
+            Remove-Item $archivePath -Force
+          }
+
+          if ("${{ matrix.archive_ext }}" -eq "zip") {
+            Compress-Archive -Path $packageDir -DestinationPath $archivePath -Force
+          } else {
+            tar -czf $archivePath -C $PWD $packageBase
+          }
+
+          "archive_path=$archivePath" >> $env:GITHUB_OUTPUT
+
+      - name: Upload packaged artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.platform }}
+          path: ${{ steps.package.outputs.archive_path }}
+          if-no-files-found: error
+
+  publish-release:
+    name: Publish GitHub release
+    needs: build-packages
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download packaged artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          pattern: release-*
+          merge-multiple: true
+
+      - name: Publish release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true
+          fail_on_unmatched_files: true
