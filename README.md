@@ -1,24 +1,43 @@
-# dbx
+# dbx DBA skill
 
-`dbx` is a Rust CLI for direct database operations against MySQL, PostgreSQL, and SQLite. It keeps the CLI small, but now separates two safety concerns clearly:
+This repository primarily ships `dbx-dba`: a DBA-oriented skill package for safe database inspection, query review, schema review, and controlled execution. The Rust `dbx` CLI still lives here, but it is now the embedded execution engine inside the skill rather than the primary thing being distributed.
 
-- write confirmation: mutating SQL still requires `--write`
-- permission policy: each profile can allow or deny explicit operation classes
-
-That makes production behavior unambiguous even when shorthand phrases like "only allow DDL" are internally contradictory.
+Releases publish platform-specific `.skill` packages, each with a native `dbx` binary embedded for the target platform. That keeps skill installation self-contained and avoids depending on a separately installed host CLI.
 
 Chinese documentation: [`docs/README.zh-CN.md`](docs/README.zh-CN.md)
 
-## Features
+## What This Repo Ships
 
-- Rust CLI built with `clap`, `serde`, `toml`, and `sqlx`
-- Profile-based config loaded from an external TOML file
-- Drivers for MySQL, PostgreSQL, and SQLite
-- Commands: `query`, `exec`, `tables`, `schema` (`desc` alias), and `explain`
-- Output formats: `table` and `json`
-- Explicit policy model: `read`, `dml_write`, `schema_inspect`, `schema_change`, `explain`
-- Built-in restrictive policies for readonly and production-like profiles
-- Conservative mutating-statement confirmation via `--write`
+- One distributable skill root at [`skill/`](skill)
+- The skill content: `SKILL.md`, `references/`, `agents/`, and `assets/`
+- One embedded Rust CLI, `dbx`, used by the skill for MySQL, PostgreSQL, and SQLite operations
+- Platform-specific release assets:
+  - `dbx-dba-linux-amd64.skill`
+  - `dbx-dba-macos-amd64.skill`
+  - `dbx-dba-windows-amd64.skill`
+- An explicit safety model in the bundled CLI:
+  - mutating SQL still requires `--write`
+  - each profile can allow or deny explicit operation classes
+
+That positioning matters: users should think "install the right `dbx-dba` skill package for the platform", then use the bundled `dbx` inside the skill. Building or calling the raw CLI directly is secondary.
+
+## Install And Use The Skill
+
+1. Download the `.skill` asset that matches the platform where the skill will run.
+2. Install or import that `.skill` into the tool/runtime that consumes skill packages.
+3. Resolve the bundled `dbx` relative to the installed skill root, not the current project directory.
+4. Use the installed `dbx-dba` skill; it should invoke the bundled binary instead of assuming `dbx` is already on the host machine.
+
+Embedded binary path convention inside the installed skill:
+
+- Linux and macOS: `assets/bin/dbx`
+- Windows: `assets/bin/dbx.exe`
+
+If the wrong `.skill` is installed, the executable under `assets/bin/` will be for the wrong platform. If the binary is missing, the package was built incorrectly.
+
+## Skill Packaging And Releases
+
+The repo ships one canonical skill payload at [`skill/`](skill). Release packaging stages that directory, injects the platform-specific `dbx` binary under `assets/bin/`, and emits a platform-specific `.skill` archive whose root is the single packaged skill. The archive does not add an extra nested `dbx-dba/` directory above `SKILL.md`.
 
 ## Build
 
@@ -38,13 +57,6 @@ GitHub Actions handles both validation and release packaging:
   - `dbx-dba-linux-amd64.skill`
   - `dbx-dba-macos-amd64.skill`
   - `dbx-dba-windows-amd64.skill`
-
-The repo ships one distributable skill payload at [`skill/`](skill). That flattened skill root contains `SKILL.md`, `references/`, `assets/`, and `agents/`. Release packaging stages that directory, injects the platform-specific `dbx` binary under `skill/assets/bin/`, and emits a platform-specific `.skill` archive whose root is the single packaged skill.
-
-Inside the packaged skill, the embedded binary path is:
-
-- `assets/bin/dbx` on Linux and macOS
-- `assets/bin/dbx.exe` on Windows
 
 `.skill` packaging is handled by [`scripts/package_skill.py`](scripts/package_skill.py). The script uses only the Python standard library, stages a temporary copy of [`skill/`](skill), injects the compiled platform binary into `assets/bin/`, and writes a deterministic zip archive with a `.skill` extension. The packaged archive does not add an extra nested `dbx-dba/` directory above `SKILL.md`.
 
@@ -87,6 +99,10 @@ That means a tag pushed from a feature branch commit will fail the release workf
 2. Create an annotated tag such as `v0.1.0` on that `main` commit.
 3. Push the tag to GitHub.
 4. Wait for the `Release` workflow to build and publish the Linux, macOS, and Windows `.skill` artifacts.
+
+## CLI Context
+
+The repository still contains the standalone `dbx` CLI source. The sections below are kept for maintainers, local development, and users who want to understand the behavior of the binary embedded inside the skill package.
 
 ## Config
 
