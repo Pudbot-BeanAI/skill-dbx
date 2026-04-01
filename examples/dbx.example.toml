@@ -1,0 +1,37 @@
+default_profile = "local_pg"
+
+[output]
+default_format = "table"
+
+[policies.reporting]
+allow = ["read", "schema_inspect", "explain"]
+
+[profiles.local_pg]
+kind = "postgres"
+url = "postgres://app:secret@127.0.0.1:5432/appdb"
+policy = "all"
+
+[profiles.local_mysql]
+kind = "mysql"
+url = "mysql://app:secret@127.0.0.1:3306/appdb"
+policy = "readonly"
+
+[profiles.local_sqlite]
+kind = "sqlite"
+url = "sqlite://./dev.db"
+policy = "all"
+
+[profiles.prod_safe_pg]
+kind = "postgres"
+url = "postgres://readonly@10.0.0.12:5432/appdb"
+policy = "prod_safe"
+
+[profiles.migration_pg]
+kind = "postgres"
+url = "postgres://migrator@10.0.0.20:5432/appdb"
+policy = "migration_only"
+
+[profiles.reporting_mysql]
+kind = "mysql"
+url = "mysql://reporter:secret@127.0.0.1:3306/appdb"
+policy = "reporting"
