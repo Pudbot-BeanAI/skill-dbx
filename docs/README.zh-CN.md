@@ -1,24 +1,43 @@
-# dbx 中文文档
+# dbx DBA 技能包
 
-`dbx` 是一个使用 Rust 编写的数据库命令行工具，直接连接 MySQL、PostgreSQL 和 SQLite。它保持 CLI 本身尽量简单，同时把两个安全控制点明确拆开：
+这个仓库现在首先分发的是 `dbx-dba`：一个面向 DBA 工作流的技能包，用于安全地做数据库检查、查询评审、变更评审和受控执行。Rust 实现的 `dbx` CLI 仍然保留在仓库里，但它现在更像技能包内部使用的执行引擎，而不是仓库对外的主产品。
 
-- 写操作确认：会修改数据或结构的 SQL 仍然必须显式传入 `--write`
-- 权限策略：每个 profile 都可以单独允许或拒绝某些操作类型
-
-这样可以避免把“只允许 DDL”这类语义含糊的说法直接映射成危险行为。
+正式发布产物是按平台区分的 `.skill` 包；每个包里都会内置目标平台对应的原生 `dbx` 二进制。这样安装技能时不需要再额外依赖宿主机单独安装 CLI。
 
 返回英文文档：[`README.md`](../README.md)
 
-## 功能特性
+## 仓库实际分发什么
 
-- 基于 Rust，使用 `clap`、`serde`、`toml` 和 `sqlx`
-- 通过外部 TOML 文件管理 profile
-- 支持 MySQL、PostgreSQL、SQLite
-- 提供 `query`、`exec`、`tables`、`schema`（`desc` 别名）、`explain`
-- 输出格式支持 `table` 和 `json`
-- 显式权限模型：`read`、`dml_write`、`schema_inspect`、`schema_change`、`explain`
-- 内置更保守的策略，适合只读或生产场景
-- 对修改性语句保持保守确认，必须显式传入 `--write`
+- 一个可分发技能根目录：[`skill/`](../skill)
+- 技能内容包括 `SKILL.md`、`references/`、`agents/` 和 `assets/`
+- 一个被技能调用的 Rust `dbx` CLI，用于 MySQL、PostgreSQL 和 SQLite
+- 按平台区分的发布产物：
+  - `dbx-dba-linux-amd64.skill`
+  - `dbx-dba-macos-amd64.skill`
+  - `dbx-dba-windows-amd64.skill`
+- 技能内置 CLI 继续使用明确的安全模型：
+  - 修改性 SQL 仍然必须显式传入 `--write`
+  - 每个 profile 都可以单独允许或拒绝某些操作类型
+
+现在更合适的理解方式是：先选择并安装目标平台对应的 `dbx-dba` 技能包，再通过技能调用其中内置的 `dbx`。直接把仓库理解成“一个裸 CLI 项目”已经不是主要定位。
+
+## 技能包的安装与使用
+
+1. 下载与技能实际运行平台匹配的 `.skill` 发布产物。
+2. 在支持技能包的工具或运行环境中安装/导入这个 `.skill`。
+3. 运行时应当相对于“已安装技能根目录”解析内置的 `dbx`，而不是相对于当前项目目录。
+4. 实际使用时优先调用安装好的 `dbx-dba` 技能，让它去执行内置的二进制，而不是假设宿主机已经单独安装了 `dbx`。
+
+安装后的技能包内部，内置二进制路径约定为：
+
+- Linux 和 macOS：`assets/bin/dbx`
+- Windows：`assets/bin/dbx.exe`
+
+如果安装了错误平台的 `.skill`，`assets/bin/` 下的可执行文件格式也会不匹配；如果这个二进制不存在，说明技能包构建本身有问题。
+
+## 技能打包与发布
+
+仓库只有一个规范的技能根目录：[`skill/`](../skill)。发布时会先对这个目录做 staging，再把当前平台编译出的 `dbx` 二进制注入到 `assets/bin/`，最后产出对应平台的 `.skill` 文件。归档根目录就是技能本身，不会再额外套一层 `dbx-dba/`。
 
 ## 构建
 
@@ -38,13 +57,6 @@ GitHub Actions 负责校验和发布打包：
   - `dbx-dba-linux-amd64.skill`
   - `dbx-dba-macos-amd64.skill`
   - `dbx-dba-windows-amd64.skill`
-
-仓库中只有一个可分发技能目录：[`skill/`](../skill)。这个扁平化后的技能根目录包含 `SKILL.md`、`references/`、`assets/` 和 `agents/`。发布时会先把它复制到临时构建目录，再把当前平台编译出的 `dbx` 二进制注入到 `skill/assets/bin/`，最后产出对应平台的 `.skill` 文件；归档根目录就是这一个技能本身，不再额外包一层 `dbx-dba/`。
-
-打包后的内置二进制路径约定为：
-
-- Linux 和 macOS: `assets/bin/dbx`
-- Windows: `assets/bin/dbx.exe`
 
 `.skill` 打包由 [`scripts/package_skill.py`](../scripts/package_skill.py) 负责。该脚本只使用 Python 标准库，会先对 [`skill/`](../skill) 做临时 staging，再把当前平台编译出的二进制注入到 `assets/bin/`，最后生成确定性的 `.skill` zip 归档。
 
@@ -87,6 +99,10 @@ GitHub Actions 不能直接从事件载荷里判断 “这个 tag 是否从 `mai
 2. 在该 `main` 提交上创建一个带注释的 tag，例如 `v0.1.0`。
 3. 把 tag 推送到 GitHub。
 4. 等待 `Release` 工作流构建并发布 Linux、macOS 和 Windows 的 `.skill` 产物。
+
+## CLI 补充说明
+
+仓库里仍然保留了独立的 `dbx` CLI 源码。下面这些章节主要用于维护者、本地开发，或者需要理解技能包里内置二进制具体行为的使用者。
 
 ## 配置文件
 
