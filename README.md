@@ -31,18 +31,43 @@ cargo build
 GitHub Actions handles both validation and release packaging:
 
 - `CI` runs on branch pushes and pull requests
-- it checks `cargo fmt --check`, `cargo test --locked`, and `cargo build --locked --release --bin dbx`
+- it checks `cargo fmt --check`, `cargo test --locked`, `cargo build --locked --release --bin dbx`, and a `.skill` packaging smoke test
 - `Release` runs only when a tag matching `v*` is pushed
 - release packaging is built natively on `ubuntu-latest`, `macos-latest`, and `windows-latest`
-- release artifact names include the runner OS label plus architecture
-- Linux and macOS artifacts are published as `.tar.gz`
-- Windows artifacts are published as `.zip` and include `dbx.exe`
+- release assets are the explicit platform-specific skill bundles:
+  - `dbx-dba-linux-amd64.skill`
+  - `dbx-dba-macos-amd64.skill`
+  - `dbx-dba-windows-amd64.skill`
 
-Release packages include:
+The repo ships one distributable skill payload at [`skill/`](skill). That flattened skill root contains `SKILL.md`, `references/`, `assets/`, and `agents/`. Release packaging stages that directory, injects the platform-specific `dbx` binary under `skill/assets/bin/`, and emits a platform-specific `.skill` archive whose root is the single packaged skill.
 
-- the compiled `dbx` binary (`dbx.exe` on Windows)
-- `README.md`
-- `LICENSE`
+Inside the packaged skill, the embedded binary path is:
+
+- `assets/bin/dbx` on Linux and macOS
+- `assets/bin/dbx.exe` on Windows
+
+`.skill` packaging is handled by [`scripts/package_skill.py`](scripts/package_skill.py). The script uses only the Python standard library, stages a temporary copy of [`skill/`](skill), injects the compiled platform binary into `assets/bin/`, and writes a deterministic zip archive with a `.skill` extension. The packaged archive does not add an extra nested `dbx-dba/` directory above `SKILL.md`.
+
+Example local packaging command:
+
+```bash
+cargo build --locked --release --bin dbx
+python scripts/package_skill.py \
+  --binary target/release/dbx \
+  --target-os linux \
+  --target-arch amd64 \
+  --output-dir dist
+```
+
+### Choosing A Release Asset
+
+Pick the `.skill` file that matches the platform where the skill will run:
+
+- Linux x86_64 / amd64: `dbx-dba-linux-amd64.skill`
+- macOS Intel / amd64: `dbx-dba-macos-amd64.skill`
+- Windows x86_64 / amd64: `dbx-dba-windows-amd64.skill`
+
+Each release asset embeds a native `dbx` binary. Installing the wrong `.skill` gives you the wrong executable format inside `assets/bin/`.
 
 ### Release Rule
 
@@ -61,7 +86,7 @@ That means a tag pushed from a feature branch commit will fail the release workf
 1. Merge the intended release commit into `main`.
 2. Create an annotated tag such as `v0.1.0` on that `main` commit.
 3. Push the tag to GitHub.
-4. Wait for the `Release` workflow to build and publish the Linux, macOS, and Windows archives.
+4. Wait for the `Release` workflow to build and publish the Linux, macOS, and Windows `.skill` artifacts.
 
 ## Config
 

@@ -31,18 +31,43 @@ cargo build
 GitHub Actions 负责校验和发布打包：
 
 - `CI` 会在分支 push 和 pull request 时运行
-- 它会检查 `cargo fmt --check`、`cargo test --locked` 和 `cargo build --locked --release --bin dbx`
+- 它会检查 `cargo fmt --check`、`cargo test --locked`、`cargo build --locked --release --bin dbx`，以及 `.skill` 打包冒烟验证
 - `Release` 只会在推送符合 `v*` 模式的 tag 时运行
 - 发布包会在 `ubuntu-latest`、`macos-latest` 和 `windows-latest` 原生构建
-- 发布产物名称会包含 runner 的操作系统标签和架构
-- Linux 和 macOS 产物使用 `.tar.gz`
-- Windows 产物使用 `.zip`，并包含 `dbx.exe`
+- 发布产物是明确的平台技能包：
+  - `dbx-dba-linux-amd64.skill`
+  - `dbx-dba-macos-amd64.skill`
+  - `dbx-dba-windows-amd64.skill`
 
-发布包包含：
+仓库中只有一个可分发技能目录：[`skill/`](../skill)。这个扁平化后的技能根目录包含 `SKILL.md`、`references/`、`assets/` 和 `agents/`。发布时会先把它复制到临时构建目录，再把当前平台编译出的 `dbx` 二进制注入到 `skill/assets/bin/`，最后产出对应平台的 `.skill` 文件；归档根目录就是这一个技能本身，不再额外包一层 `dbx-dba/`。
 
-- 编译后的 `dbx` 可执行文件（Windows 下为 `dbx.exe`）
-- `README.md`
-- `LICENSE`
+打包后的内置二进制路径约定为：
+
+- Linux 和 macOS: `assets/bin/dbx`
+- Windows: `assets/bin/dbx.exe`
+
+`.skill` 打包由 [`scripts/package_skill.py`](../scripts/package_skill.py) 负责。该脚本只使用 Python 标准库，会先对 [`skill/`](../skill) 做临时 staging，再把当前平台编译出的二进制注入到 `assets/bin/`，最后生成确定性的 `.skill` zip 归档。
+
+本地打包示例：
+
+```bash
+cargo build --locked --release --bin dbx
+python scripts/package_skill.py \
+  --binary target/release/dbx \
+  --target-os linux \
+  --target-arch amd64 \
+  --output-dir dist
+```
+
+### 如何选择发布产物
+
+请按技能实际运行的平台选择对应的 `.skill` 文件：
+
+- Linux x86_64 / amd64: `dbx-dba-linux-amd64.skill`
+- macOS Intel / amd64: `dbx-dba-macos-amd64.skill`
+- Windows x86_64 / amd64: `dbx-dba-windows-amd64.skill`
+
+之所以要区分平台，是因为每个 `.skill` 内都内置了对应平台的原生 `dbx` 二进制；如果选错，`assets/bin/` 里的可执行文件格式也会不匹配。
 
 ### 发布规则
 
@@ -61,7 +86,7 @@ GitHub Actions 不能直接从事件载荷里判断 “这个 tag 是否从 `mai
 1. 先把准备发布的提交合并到 `main`。
 2. 在该 `main` 提交上创建一个带注释的 tag，例如 `v0.1.0`。
 3. 把 tag 推送到 GitHub。
-4. 等待 `Release` 工作流构建并发布 Linux、macOS 和 Windows 的压缩包。
+4. 等待 `Release` 工作流构建并发布 Linux、macOS 和 Windows 的 `.skill` 产物。
 
 ## 配置文件
 

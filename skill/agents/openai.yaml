@@ -1,0 +1,4 @@
+interface:
+  display_name: "dbx DBA"
+  short_description: "Run the bundled dbx database CLI"
+  default_prompt: "Use $dbx-dba to inspect schemas, query databases, and run dbx commands through the embedded binary in ./assets/bin/dbx or ./assets/bin/dbx.exe."
