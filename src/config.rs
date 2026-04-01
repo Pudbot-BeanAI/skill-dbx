@@ -131,18 +131,42 @@ pub fn resolve_config_path(explicit: Option<&Path>) -> Result<PathBuf> {
         return Ok(path.to_path_buf());
     }
 
-    let local = PathBuf::from("dbx.toml");
-    if local.exists() {
-        return Ok(local);
+    let candidates = default_config_candidates()?;
+    candidates
+        .iter()
+        .find(|path| path.exists())
+        .cloned()
+        .ok_or_else(|| {
+            anyhow!(
+                "no config file found; looked in {}; pass `--config` explicitly",
+                candidates
+                    .iter()
+                    .map(|path| format!("`{}`", path.display()))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+        })
+}
+
+fn default_config_candidates() -> Result<Vec<PathBuf>> {
+    let mut candidates = vec![PathBuf::from("dbx.toml")];
+    let home_dir = dirs::home_dir();
+
+    if let Some(home_dir) = home_dir.as_ref() {
+        candidates.push(home_dir.join(".dbx").join("config.toml"));
     }
 
-    let Some(mut config_dir) = dirs::config_dir() else {
-        bail!("could not determine a default config path; pass `--config` explicitly");
-    };
+    if let Some(xdg_dir) = std::env::var_os("XDG_CONFIG_HOME").filter(|value| !value.is_empty()) {
+        candidates.push(PathBuf::from(xdg_dir).join("dbx").join("config.toml"));
+    } else if let Some(home_dir) = home_dir {
+        candidates.push(home_dir.join(".config").join("dbx").join("config.toml"));
+    }
 
-    config_dir.push("dbx");
-    config_dir.push("config.toml");
-    Ok(config_dir)
+    if candidates.len() == 1 {
+        bail!("could not determine a default config path; pass `--config` explicitly");
+    }
+
+    Ok(candidates)
 }
 
 impl fmt::Display for DatabaseKind {
@@ -211,15 +235,18 @@ impl PermissionPolicy {
 #[cfg(test)]
 mod tests {
     use std::{
+        ffi::OsString,
         path::PathBuf,
         sync::{Mutex, OnceLock},
     };
 
-    use super::{Config, DatabaseKind, PermissionPolicy, resolve_config_path};
+    use super::{
+        Config, DatabaseKind, PermissionPolicy, default_config_candidates, resolve_config_path,
+    };
     use crate::sql::OperationClass;
     use tempfile::tempdir;
 
-    fn cwd_lock() -> &'static Mutex<()> {
+    fn process_lock() -> &'static Mutex<()> {
         static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
         LOCK.get_or_init(|| Mutex::new(()))
     }
@@ -228,6 +255,13 @@ mod tests {
         let file = tempfile::NamedTempFile::new().unwrap();
         std::fs::write(file.path(), contents).unwrap();
         file
+    }
+
+    fn restore_env_var(key: &str, value: Option<OsString>) {
+        match value {
+            Some(value) => unsafe { std::env::set_var(key, value) },
+            None => unsafe { std::env::remove_var(key) },
+        }
     }
 
     #[test]
@@ -362,7 +396,7 @@ default_format = "json"
 
     #[test]
     fn resolve_config_path_prefers_local_file() {
-        let _guard = cwd_lock().lock().unwrap();
+        let _guard = process_lock().lock().unwrap();
         let dir = tempdir().unwrap();
         let original = std::env::current_dir().unwrap();
         std::env::set_current_dir(dir.path()).unwrap();
@@ -372,5 +406,106 @@ default_format = "json"
 
         std::env::set_current_dir(original).unwrap();
         assert_eq!(resolved, PathBuf::from("dbx.toml"));
+    }
+
+    #[test]
+    fn resolve_config_path_prefers_home_dbx_file_over_xdg_config() {
+        let _guard = process_lock().lock().unwrap();
+        let dir = tempdir().unwrap();
+        let home_dir = dir.path().join("home");
+        let xdg_dir = dir.path().join("xdg");
+        let home_config = home_dir.join(".dbx").join("config.toml");
+        let xdg_config = xdg_dir.join("dbx").join("config.toml");
+        std::fs::create_dir_all(home_config.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(xdg_config.parent().unwrap()).unwrap();
+        std::fs::write(&home_config, "ignored").unwrap();
+        std::fs::write(&xdg_config, "ignored").unwrap();
+
+        let original_home = std::env::var_os("HOME");
+        let original_xdg = std::env::var_os("XDG_CONFIG_HOME");
+        unsafe {
+            std::env::set_var("HOME", &home_dir);
+            std::env::set_var("XDG_CONFIG_HOME", &xdg_dir);
+        }
+
+        let resolved = resolve_config_path(None).unwrap();
+
+        restore_env_var("HOME", original_home);
+        restore_env_var("XDG_CONFIG_HOME", original_xdg);
+        assert_eq!(resolved, home_config);
+    }
+
+    #[test]
+    fn resolve_config_path_falls_back_to_xdg_when_home_dbx_file_is_missing() {
+        let _guard = process_lock().lock().unwrap();
+        let dir = tempdir().unwrap();
+        let home_dir = dir.path().join("home");
+        let xdg_dir = dir.path().join("xdg");
+        let xdg_config = xdg_dir.join("dbx").join("config.toml");
+        std::fs::create_dir_all(&home_dir).unwrap();
+        std::fs::create_dir_all(xdg_config.parent().unwrap()).unwrap();
+        std::fs::write(&xdg_config, "ignored").unwrap();
+
+        let original_home = std::env::var_os("HOME");
+        let original_xdg = std::env::var_os("XDG_CONFIG_HOME");
+        unsafe {
+            std::env::set_var("HOME", &home_dir);
+            std::env::set_var("XDG_CONFIG_HOME", &xdg_dir);
+        }
+
+        let resolved = resolve_config_path(None).unwrap();
+
+        restore_env_var("HOME", original_home);
+        restore_env_var("XDG_CONFIG_HOME", original_xdg);
+        assert_eq!(resolved, xdg_config);
+    }
+
+    #[test]
+    fn default_config_candidates_use_home_dot_config_when_xdg_env_is_missing() {
+        let _guard = process_lock().lock().unwrap();
+        let dir = tempdir().unwrap();
+        let home_dir = dir.path().join("home");
+        let expected = home_dir.join(".config").join("dbx").join("config.toml");
+        std::fs::create_dir_all(&home_dir).unwrap();
+
+        let original_home = std::env::var_os("HOME");
+        let original_xdg = std::env::var_os("XDG_CONFIG_HOME");
+        unsafe {
+            std::env::set_var("HOME", &home_dir);
+            std::env::remove_var("XDG_CONFIG_HOME");
+        }
+
+        let candidates = default_config_candidates().unwrap();
+
+        restore_env_var("HOME", original_home);
+        restore_env_var("XDG_CONFIG_HOME", original_xdg);
+        assert_eq!(candidates[2], expected);
+    }
+
+    #[test]
+    fn resolve_config_path_errors_when_no_default_config_exists() {
+        let _guard = process_lock().lock().unwrap();
+        let dir = tempdir().unwrap();
+        let home_dir = dir.path().join("home");
+        let original = std::env::current_dir().unwrap();
+        std::env::set_current_dir(dir.path()).unwrap();
+        std::fs::create_dir_all(&home_dir).unwrap();
+
+        let original_home = std::env::var_os("HOME");
+        let original_xdg = std::env::var_os("XDG_CONFIG_HOME");
+        unsafe {
+            std::env::set_var("HOME", &home_dir);
+            std::env::remove_var("XDG_CONFIG_HOME");
+        }
+
+        let err = resolve_config_path(None).unwrap_err();
+
+        std::env::set_current_dir(original).unwrap();
+        restore_env_var("HOME", original_home);
+        restore_env_var("XDG_CONFIG_HOME", original_xdg);
+        assert!(err.to_string().contains("no config file found; looked in"));
+        assert!(err.to_string().contains("dbx.toml"));
+        assert!(err.to_string().contains(".dbx/config.toml"));
+        assert!(err.to_string().contains(".config/dbx/config.toml"));
     }
 }

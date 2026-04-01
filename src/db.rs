@@ -220,15 +220,20 @@ fn cell_to_json(row: &AnyRow, index: usize) -> JsonValue {
     }
 
     if let Ok(value) = row.try_get::<Option<Vec<u8>>, _>(index) {
-        return value
-            .map(|bytes| JsonValue::String(format!("0x{}", hex_string(&bytes))))
-            .unwrap_or(JsonValue::Null);
+        return value.map(bytes_to_json).unwrap_or(JsonValue::Null);
     }
 
     row.columns()
         .get(index)
         .map(|column| JsonValue::String(format!("<unhandled:{}>", column.type_info().name())))
         .unwrap_or(JsonValue::Null)
+}
+
+fn bytes_to_json(bytes: Vec<u8>) -> JsonValue {
+    match String::from_utf8(bytes) {
+        Ok(text) => JsonValue::String(text),
+        Err(err) => JsonValue::String(format!("0x{}", hex_string(&err.into_bytes()))),
+    }
 }
 
 fn hex_string(bytes: &[u8]) -> String {
@@ -247,8 +252,8 @@ mod tests {
     use tempfile::tempdir;
 
     use super::{
-        DatabaseClient, build_explain_sql, build_schema_sql, build_tables_sql, escape_sql_literal,
-        hex_string, sqlite_schema_reference,
+        DatabaseClient, build_explain_sql, build_schema_sql, build_tables_sql, bytes_to_json,
+        escape_sql_literal, hex_string, sqlite_schema_reference,
     };
     use crate::{
         config::{DatabaseKind, ProfileConfig},
@@ -340,6 +345,18 @@ mod tests {
         assert_eq!(hex_string(&[0x0a, 0xff, 0x10]), "0aff10");
     }
 
+    #[test]
+    fn bytes_to_json_decodes_utf8_and_preserves_binary_as_hex() {
+        assert_eq!(
+            bytes_to_json(b"bigint".to_vec()),
+            serde_json::json!("bigint")
+        );
+        assert_eq!(
+            bytes_to_json(vec![0x0a, 0xff, 0x10]),
+            serde_json::json!("0x0aff10")
+        );
+    }
+
     #[tokio::test]
     async fn sqlite_client_runs_queries_and_introspection() {
         install_drivers();
@@ -368,18 +385,25 @@ mod tests {
         ));
 
         let rows = client
-            .query("select id, name, 1.5 as ratio, x'0AFF' as blob, null as missing from users")
+            .query(
+                "select id, name, 1.5 as ratio, cast('bigint' as blob) as text_blob, \
+                 x'0AFF' as blob, null as missing from users",
+            )
             .await
             .unwrap();
         match rows {
             CommandOutput::ResultSet { columns, rows } => {
-                assert_eq!(columns, vec!["id", "name", "ratio", "blob", "missing"]);
+                assert_eq!(
+                    columns,
+                    vec!["id", "name", "ratio", "text_blob", "blob", "missing"]
+                );
                 assert_eq!(rows.len(), 1);
                 assert_eq!(rows[0][0], serde_json::json!(1));
                 assert_eq!(rows[0][1], serde_json::json!("alice"));
                 assert_eq!(rows[0][2], serde_json::json!(1.5));
-                assert_eq!(rows[0][3], serde_json::json!("0x0aff"));
-                assert_eq!(rows[0][4], serde_json::Value::Null);
+                assert_eq!(rows[0][3], serde_json::json!("bigint"));
+                assert_eq!(rows[0][4], serde_json::json!("0x0aff"));
+                assert_eq!(rows[0][5], serde_json::Value::Null);
             }
             CommandOutput::Exec { .. } => panic!("expected result set"),
         }
